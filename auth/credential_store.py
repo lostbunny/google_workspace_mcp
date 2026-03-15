@@ -267,12 +267,14 @@ class OnePasswordCredentialStore(CredentialStore):
         if not client_id or not client_secret:
             logger.error("OnePasswordCredentialStore: failed to read client_id or client_secret")
             return None
+        from auth.scopes import get_current_scopes
         return Credentials(
             token=None,
             refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
+            scopes=get_current_scopes(),
         )
 
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
