@@ -8,6 +8,7 @@ supporting multiple backends configurable via environment variables.
 import os
 import json
 import logging
+import subprocess
 from abc import ABC, abstractmethod
 from typing import Optional, List
 from datetime import datetime
@@ -232,6 +233,61 @@ class LocalDirectoryCredentialStore(CredentialStore):
         return sorted(users)
 
 
+class OnePasswordCredentialStore(CredentialStore):
+    """
+    Read-only credential store backed by 1Password.
+    Reads client_id, client_secret, and refresh_token from 1Password at get_credential() time.
+    store_credential() is intentionally a no-op — access tokens stay in memory.
+    Refresh token writes are handled by the external reauth script.
+    """
+
+    def __init__(self):
+        self.op_path    = os.environ["OP_PATH"]
+        self.vault      = os.environ["OP_VAULT"]
+        self.oauth_item = os.environ["OP_OAUTH_ITEM"]
+        self.token_item = os.environ["OP_REFRESH_TOKEN_ITEM"]
+        self.user_email = os.environ.get("USER_GOOGLE_EMAIL", "")
+        logger.info("OnePasswordCredentialStore initialized")
+
+    def _op_read(self, ref: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                [self.op_path, "read", ref],
+                capture_output=True, text=True, check=True
+            )
+            return result.stdout.strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error(f"op read failed for {ref}: {e}")
+            return None
+
+    def get_credential(self, user_email: str) -> Optional[Credentials]:
+        client_id     = self._op_read(f"op://{self.vault}/{self.oauth_item}/username")
+        client_secret = self._op_read(f"op://{self.vault}/{self.oauth_item}/password")
+        refresh_token = self._op_read(f"op://{self.vault}/{self.token_item}/password")
+        if not client_id or not client_secret:
+            logger.error("OnePasswordCredentialStore: failed to read client_id or client_secret")
+            return None
+        return Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+
+    def store_credential(self, user_email: str, credentials: Credentials) -> bool:
+        # Access tokens are memory-only. Refresh token writes use the reauth script.
+        logger.debug("OnePasswordCredentialStore.store_credential: no-op")
+        return True
+
+    def delete_credential(self, user_email: str) -> bool:
+        logger.debug("OnePasswordCredentialStore.delete_credential: no-op")
+        return True
+
+    def list_users(self) -> List[str]:
+        return [self.user_email] if self.user_email else []
+
+
 # Global credential store instance
 _credential_store: Optional[CredentialStore] = None
 
@@ -246,9 +302,10 @@ def get_credential_store() -> CredentialStore:
     global _credential_store
 
     if _credential_store is None:
-        # always use LocalJsonCredentialStore as the default
-        # Future enhancement: support other backends via environment variables
-        _credential_store = LocalDirectoryCredentialStore()
+        if os.environ.get("CRED_SOURCE") == "manager":
+            _credential_store = OnePasswordCredentialStore()
+        else:
+            _credential_store = LocalDirectoryCredentialStore()
         logger.info(f"Initialized credential store: {type(_credential_store).__name__}")
 
     return _credential_store

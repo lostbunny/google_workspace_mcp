@@ -9,9 +9,23 @@ Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection
 """
 
 import os
+import subprocess
 from threading import RLock
 from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
+
+
+def _op_read(ref: str) -> Optional[str]:
+    """Read a value from 1Password via the op CLI. Returns None on failure."""
+    op_path = os.environ.get("OP_PATH", "op")
+    try:
+        result = subprocess.run(
+            [op_path, "read", ref],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip() or None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 class OAuthConfig:
@@ -33,8 +47,14 @@ class OAuthConfig:
         self.external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
 
         # OAuth client configuration
-        self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
-        self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+        if os.environ.get("CRED_SOURCE") == "manager":
+            vault  = os.environ.get("OP_VAULT", "")
+            item   = os.environ.get("OP_OAUTH_ITEM", "")
+            self.client_id     = _op_read(f"op://{vault}/{item}/username")
+            self.client_secret = _op_read(f"op://{vault}/{item}/password")
+        else:
+            self.client_id     = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+            self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
 
         # OAuth 2.1 configuration
         self.oauth21_enabled = (
