@@ -139,6 +139,11 @@ class OAuthConfig:
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET", self.client_secret)
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL", self.get_oauth_base_url())
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH", self.redirect_path)
+        # Also populate the standard GOOGLE_OAUTH_* vars so google_auth.py can find them.
+        # These are set by the Python process itself (not passed in from outside), so this
+        # is consistent with the no-secrets-in-env-vars policy.
+        _set_if_absent("GOOGLE_OAUTH_CLIENT_ID", self.client_id)
+        _set_if_absent("GOOGLE_OAUTH_CLIENT_SECRET", self.client_secret)
 
     def get_redirect_uris(self) -> List[str]:
         """
