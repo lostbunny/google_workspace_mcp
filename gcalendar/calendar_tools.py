@@ -486,6 +486,7 @@ async def get_events(
             # Add detailed information for multiple events
             description = item.get("description", "No Description")
             location = item.get("location", "No Location")
+            color_id = item.get("colorId", "None")
             attendees = item.get("attendees", [])
             attendee_emails = (
                 ", ".join([a.get("email", "") for a in attendees])
@@ -498,6 +499,7 @@ async def get_events(
                 f'- "{summary}" (Starts: {start_time}, Ends: {end_time})\n'
                 f"  Description: {description}\n"
                 f"  Location: {location}\n"
+                f"  Color ID: {color_id}\n"
                 f"  Attendees: {attendee_emails}\n"
                 f"  Attendee Details: {attendee_details_str}\n"
             )
@@ -513,8 +515,9 @@ async def get_events(
             event_details_list.append(event_detail_parts)
         else:
             # Basic output format
+            color_id = item.get("colorId", "None")
             event_details_list.append(
-                f'- "{summary}" (Starts: {start_time}, Ends: {end_time}) ID: {item_event_id} | Link: {link}'
+                f'- "{summary}" (Starts: {start_time}, Ends: {end_time}) Color ID: {color_id} | ID: {item_event_id} | Link: {link}'
             )
 
     if event_id:
