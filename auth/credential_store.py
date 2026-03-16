@@ -249,21 +249,25 @@ class OnePasswordCredentialStore(CredentialStore):
         self.user_email = os.environ.get("USER_GOOGLE_EMAIL", "")
         logger.info("OnePasswordCredentialStore initialized")
 
-    def _op_read(self, ref: str) -> Optional[str]:
+    def _op_item_get(self, item_name: str) -> dict:
+        """Fetch all fields from a 1Password item in one subprocess call. Returns {field_id: value}."""
         try:
             result = subprocess.run(
-                [self.op_path, "read", ref],
+                [self.op_path, "item", "get", item_name, "--vault", self.vault, "--format", "json"],
                 capture_output=True, text=True, check=True
             )
-            return result.stdout.strip() or None
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logger.error(f"op read failed for {ref}: {e}")
-            return None
+            item = json.loads(result.stdout)
+            return {f["id"]: f.get("value", "") for f in item.get("fields", []) if f.get("value")}
+        except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"op item get failed for '{item_name}': {e}")
+            return {}
 
     def get_credential(self, user_email: str) -> Optional[Credentials]:
-        client_id     = self._op_read(f"op://{self.vault}/{self.oauth_item}/username")
-        client_secret = self._op_read(f"op://{self.vault}/{self.oauth_item}/password")
-        refresh_token = self._op_read(f"op://{self.vault}/{self.token_item}/password")
+        oauth_fields  = self._op_item_get(self.oauth_item)
+        token_fields  = self._op_item_get(self.token_item)
+        client_id     = oauth_fields.get("username")
+        client_secret = oauth_fields.get("password")
+        refresh_token = token_fields.get("password")
         if not client_id or not client_secret:
             logger.error("OnePasswordCredentialStore: failed to read client_id or client_secret")
             return None
