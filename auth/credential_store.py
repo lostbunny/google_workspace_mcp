@@ -267,13 +267,38 @@ class OnePasswordCredentialStore(CredentialStore):
         if not client_id or not client_secret:
             logger.error("OnePasswordCredentialStore: failed to read client_id or client_secret")
             return None
-        return Credentials(
+        from datetime import datetime
+        creds = Credentials(
             token=None,
             refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
+            expiry=datetime(2000, 1, 1),
         )
+        # Eagerly refresh so the credentials are valid before returning.
+        # google-auth doesn't populate creds.scopes from the refresh response,
+        # so we fetch the authorized scopes from Google's tokeninfo endpoint
+        # and set them explicitly. This is the only way to pass the downstream
+        # has_required_scopes() check without touching google_auth.py.
+        try:
+            import urllib.request, json as _json
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            if creds.scopes is None:
+                info = _json.loads(urllib.request.urlopen(
+                    f"https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}"
+                ).read())
+                scope_str = info.get("scope", "")
+                if scope_str:
+                    creds._scopes = frozenset(scope_str.split())
+            logger.info(f"OnePasswordCredentialStore: credentials ready, {len(creds._scopes or [])} scopes")
+        except Exception as e:
+            logger.error(f"OnePasswordCredentialStore: eager refresh failed: {e}")
+            return None
+        return creds
+        logger.info(f"OnePasswordCredentialStore: returning Credentials — expired: {creds.expired}, refresh_token present: {bool(creds.refresh_token)}")
+        return creds
 
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
         # Access tokens are memory-only. Refresh token writes use the reauth script.
