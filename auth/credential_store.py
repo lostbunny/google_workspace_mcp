@@ -233,6 +233,72 @@ class LocalDirectoryCredentialStore(CredentialStore):
         return sorted(users)
 
 
+class LinuxKeyringCredentialStore(CredentialStore):
+    """
+    Read-only credential store backed by the Linux keyring (via the `keyring` library).
+    Supports GNOME Keyring, KWallet, and other backends automatically.
+    Reads client_id, client_secret, and refresh_token at get_credential() time.
+    store_credential() is a no-op — access tokens stay in process memory only.
+    """
+
+    SERVICE = "google-workspace-mcp"
+
+    def __init__(self):
+        self.user_email = os.environ.get("USER_GOOGLE_EMAIL", "")
+        logger.info("LinuxKeyringCredentialStore initialized")
+
+    def get_credential(self, user_email: str) -> Optional[Credentials]:
+        import keyring as kr
+        client_id     = kr.get_password(self.SERVICE, "client_id")
+        client_secret = kr.get_password(self.SERVICE, "client_secret")
+        refresh_token = kr.get_password(self.SERVICE, f"refresh_token:{user_email}")
+
+        if not client_id or not client_secret:
+            logger.error("LinuxKeyringCredentialStore: client_id or client_secret not found in keyring")
+            return None
+        if not refresh_token:
+            logger.error(f"LinuxKeyringCredentialStore: refresh_token not found for {user_email}")
+            return None
+
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            expiry=datetime(2000, 1, 1),
+        )
+        # Eagerly refresh to get a valid access token; populate scopes from tokeninfo
+        try:
+            import urllib.request, json as _json
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            if creds.scopes is None:
+                info = _json.loads(urllib.request.urlopen(
+                    f"https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}"
+                ).read())
+                scope_str = info.get("scope", "")
+                if scope_str:
+                    creds._scopes = frozenset(scope_str.split())
+            logger.info(f"LinuxKeyringCredentialStore: credentials ready, {len(creds._scopes or [])} scopes")
+        except Exception as e:
+            logger.error(f"LinuxKeyringCredentialStore: eager refresh failed: {e}")
+            return None
+        return creds
+
+    def store_credential(self, user_email: str, credentials: Credentials) -> bool:
+        # Access tokens are memory-only.
+        logger.debug("LinuxKeyringCredentialStore.store_credential: no-op")
+        return True
+
+    def delete_credential(self, user_email: str) -> bool:
+        logger.debug("LinuxKeyringCredentialStore.delete_credential: no-op")
+        return True
+
+    def list_users(self) -> List[str]:
+        return [self.user_email] if self.user_email else []
+
+
 class OnePasswordCredentialStore(CredentialStore):
     """
     Read-only credential store backed by 1Password.
@@ -331,8 +397,11 @@ def get_credential_store() -> CredentialStore:
     global _credential_store
 
     if _credential_store is None:
-        if os.environ.get("CRED_SOURCE") == "manager":
+        cred_source = os.environ.get("CRED_SOURCE")
+        if cred_source == "manager":
             _credential_store = OnePasswordCredentialStore()
+        elif cred_source == "Linux_Keyring":
+            _credential_store = LinuxKeyringCredentialStore()
         else:
             _credential_store = LocalDirectoryCredentialStore()
         logger.info(f"Initialized credential store: {type(_credential_store).__name__}")

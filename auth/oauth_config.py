@@ -28,6 +28,19 @@ def _op_read(ref: str) -> Optional[str]:
         return None
 
 
+def _linux_keyring_read_client():
+    """Read client_id and client_secret from the Linux keyring."""
+    try:
+        import keyring as kr
+        client_id     = kr.get_password("google-workspace-mcp", "client_id")
+        client_secret = kr.get_password("google-workspace-mcp", "client_secret")
+        return client_id, client_secret
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Linux keyring read failed: {e}")
+        return None, None
+
+
 class OAuthConfig:
     """
     Centralized OAuth configuration management.
@@ -52,6 +65,8 @@ class OAuthConfig:
             item   = os.environ.get("OP_OAUTH_ITEM", "")
             self.client_id     = _op_read(f"op://{vault}/{item}/username")
             self.client_secret = _op_read(f"op://{vault}/{item}/password")
+        elif os.environ.get("CRED_SOURCE") == "Linux_Keyring":
+            self.client_id, self.client_secret = _linux_keyring_read_client()
         else:
             self.client_id     = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
             self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
